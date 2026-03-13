@@ -1,18 +1,35 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const mongoose = require('mongoose'); // <-- Nueva herramienta de base de datos
 
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
+// VARIABLES DE ENTORNO
 const TOKEN = process.env.TOKEN;
 const ID_TELEFONO = process.env.ID_TELEFONO;
+const MONGO_URI = process.env.MONGO_URI;
+
+// 1. CONEXIÓN A MONGODB
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('✅ Conectado a la base de datos de Warshop'))
+    .catch(err => console.error('❌ Error de conexión a MongoDB:', err));
+
+// 2. MODELO DE DATOS (La "ficha" del conductor)
+const ConductorSchema = new mongoose.Schema({
+    telefono: String,
+    datos: String, // Aquí guardaremos el nombre y la cédula que envíen
+    fecha: { type: Date, default: Date.now }
+});
+const Conductor = mongoose.model('Conductor', ConductorSchema);
 
 app.get('/', (req, res) => {
-    res.send('¡El motor de WARSHOP está encendido! 🚖');
+    res.send('¡El motor de WARSHOP está encendido y con memoria! 🚖');
 });
 
+// VERIFICACIÓN DEL WEBHOOK
 app.get('/webhook', (req, res) => {
     const VERIFY_TOKEN = "warshop2026";
     const mode = req.query["hub.mode"];
@@ -26,6 +43,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
+// RECOPCIÓN DE MENSAJES
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body.entry?.[0];
@@ -36,12 +54,24 @@ app.post('/webhook', async (req, res) => {
         if (message) {
             const telefonoCliente = message.from;
 
-            // 1. SI RECIBIMOS TEXTO (BIENVENIDA)
+            // --- LÓGICA DE TEXTO (BIENVENIDA O REGISTRO) ---
             if (message.type === "text") {
-                await enviarMenuBienvenida(telefonoCliente);
+                const textoUser = message.text.body.toLowerCase();
+
+                // Si el mensaje parece un registro (contiene nombre o cedula)
+                if (textoUser.includes("nombre") || textoUser.includes("cedula")) {
+                    const nuevoConductor = new Conductor({
+                        telefono: telefonoCliente,
+                        datos: message.text.body
+                    });
+                    await nuevoConductor.save(); // <-- AQUÍ SE GUARDA EN LA NUBE
+                    await enviarRespuesta(telefonoCliente, "✅ *¡Warshop Mobility te ha registrado!* Tus datos han sido guardados con éxito en nuestra base de datos.");
+                } else {
+                    await enviarMenuBienvenida(telefonoCliente);
+                }
             } 
 
-            // 2. SI TOCAN UN BOTÓN INTERACTIVO
+            // --- LÓGICA DE BOTONES ---
             else if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
 
@@ -49,23 +79,20 @@ app.post('/webhook', async (req, res) => {
                     await enviarMenuVehiculos(telefonoCliente);
                 } 
                 else if (responseId === "btn_afiliar") {
-                    await enviarRespuesta(telefonoCliente, "¡Bienvenido al equipo! 🔑 Por favor, envíanos tu *Nombre completo* y una foto de tu *Cédula* para iniciar el registro.");
+                    await enviarRespuesta(telefonoCliente, "¡Bienvenido al equipo! 🔑 Por favor, envíanos tu *Nombre completo* y tu *Cédula* en un solo mensaje para iniciar el registro.");
                 }
                 else if (responseId === "select_moto" || responseId === "select_carro") {
                     const tipo = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
-                    await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\n📍 Ahora, por favor, envíanos tu *Ubicación Actual*:\n\n1. Toca el clip (📎) o el signo (+).\n2. Elige "Ubicación".\n3. Selecciona "Ubicación en tiempo real" o "Enviar mi ubicación actual".`);
+                    await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\n📍 Ahora, envíanos tu *Ubicación Actual* por WhatsApp para buscarte la unidad más cercana.`);
                 }
             }
 
-            // 3. SI EL CLIENTE ENVÍA SU UBICACIÓN GPS 📍
+            // --- LÓGICA DE UBICACIÓN ---
             else if (message.type === "location") {
                 const lat = message.location.latitude;
                 const lng = message.location.longitude;
-                
                 console.log(`📍 Coordenadas de ${telefonoCliente}: Lat ${lat}, Lng ${lng}`);
-                
-                // Aquí el bot confirma y tú podrías recibir esta info en un grupo de conductores
-                await enviarRespuesta(telefonoCliente, "¡Ubicación recibida con éxito! ✅📍 Estamos buscando la unidad de *Warshop Mobility* más cercana a tu posición. Te avisaremos en un momento.");
+                await enviarRespuesta(telefonoCliente, "¡Ubicación recibida! ✅ Estamos buscando tu unidad de *Warshop*. Te avisaremos en un momento.");
             }
         }
         res.sendStatus(200);

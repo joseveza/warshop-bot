@@ -89,7 +89,7 @@ async function enviarMenuBienvenida(numero) {
                         buttons: [
                             { 
                                 type: "reply", 
-                                reply: { id: "btn_solicitar", title: "Solicitar servicio trasnporte" } 
+                                reply: { id: "btn_solicitar", title: "Servicio Transporte" } 
                             },
                             { 
                                 type: "reply", 

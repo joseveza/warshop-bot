@@ -13,6 +13,7 @@ app.get('/', (req, res) => {
     res.send('¡El servidor de WARSHOP está activo y listo para responder! 🚖');
 });
 
+// VERIFICACIÓN DEL WEBHOOK
 app.get('/webhook', (req, res) => {
     const VERIFY_TOKEN = "warshop2026";
     const mode = req.query["hub.mode"];
@@ -26,7 +27,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 3. RECIBIR MENSAJES Y RESPONDER CON EL MENÚ PROFESIONAL
+// RECIBIR MENSAJES Y PROCESAR BOTONES
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body.entry?.[0];
@@ -37,13 +38,13 @@ app.post('/webhook', async (req, res) => {
         if (message) {
             const telefonoCliente = message.from;
 
-            // CASO A: El cliente escribe un texto (Hola, Buenos días, etc.)
+            // Si el cliente escribe un texto (Hola, etc.)
             if (message.type === "text") {
                 console.log(`📩 Cliente escribió: ${message.text.body}`);
                 await enviarMenuBienvenida(telefonoCliente);
             } 
 
-            // CASO B: El cliente toca uno de los botones del menú
+            // Si el cliente toca un botón
             else if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
                 console.log(`🔘 Botón presionado: ${responseId}`);
@@ -62,7 +63,7 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// FUNCIÓN PARA EL MENÚ VISUAL CON BOTONES
+// --- ÚNICA FUNCIÓN DE BIENVENIDA (DISEÑO PROFESIONAL) ---
 async function enviarMenuBienvenida(numero) {
     try {
         await axios({
@@ -77,25 +78,22 @@ async function enviarMenuBienvenida(numero) {
                     header: {
                         type: "image",
                         image: {
-                            // ⚠️ REEMPLAZA "TU_ID_AQUI" con el ID de tu imagen en Google Drive
-                            link: "https://drive.google.com/uc?export=view&id=1FteftVfZTXRtHsWFl-azEwhgtYSefhOE"
+                            // Usando tu ID de imagen más reciente
+                            link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr"
                         }
                     },
                     body: {
                         text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\n\nTu plataforma de transporte confiable.\n\n¿Qué deseas hacer hoy?"
                     },
-                    footer: {
-                        text: "Selecciona una opción abajo 👇"
-                    },
                     action: {
                         buttons: [
-                            {
-                                type: "reply",
-                                reply: { id: "btn_solicitar", title: "🚖 Solicitar Servicio" }
+                            { 
+                                type: "reply", 
+                                reply: { id: "btn_solicitar", title: "Solicitar servicio trasnporte" } 
                             },
-                            {
-                                type: "reply",
-                                reply: { id: "btn_afiliar", title: "🔑 Afiliación" }
+                            { 
+                                type: "reply", 
+                                reply: { id: "btn_afiliar", title: "Afiliación" } 
                             }
                         ]
                     }
@@ -103,13 +101,13 @@ async function enviarMenuBienvenida(numero) {
             },
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
         });
-        console.log("✅ Menú de Bienvenida enviado");
+        console.log("✅ Menú de Bienvenida (App Look) enviado");
     } catch (error) {
         console.error("❌ Error enviando menú:", error.response?.data || error.message);
     }
 }
 
-// FUNCIÓN PARA TEXTO SIMPLE (La usamos para las respuestas de los botones)
+// FUNCIÓN PARA RESPUESTAS DE TEXTO
 async function enviarRespuesta(numero, texto) {
     try {
         await axios({
@@ -131,39 +129,3 @@ async function enviarRespuesta(numero, texto) {
 app.listen(PORT, () => {
     console.log(`🚀 Motor de WARSHOP rugiendo en el puerto ${PORT}`);
 });
-
-async function enviarMenuBienvenida(numero) {
-    try {
-        await axios({
-            method: "POST",
-            url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: {
-                messaging_product: "whatsapp",
-                to: numero,
-                type: "interactive",
-                interactive: {
-                    type: "button",
-                    header: {
-                        type: "image",
-                        image: {
-                            // 👉 AQUÍ PEGAS TU LINK DE GOOGLE DRIVE (EL QUE CONVERTIMOS)
-                            link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr"
-                        }
-                    },
-                    body: {
-                        text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\nTu plataforma de transporte confiable.\n¿Qué deseas hacer hoy?"
-                    },
-                    action: {
-                        buttons: [
-                            { type: "reply", reply: { id: "btn_solicitar", title: "Solicitar Servicio" } },
-                            { type: "reply", reply: { id: "btn_afiliar", title: "Afiliación" } }
-                        ]
-                    }
-                }
-            },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (error) {
-        console.error("❌ Error enviando menú:", error.response?.data || error.message);
-    }
-}

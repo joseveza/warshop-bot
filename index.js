@@ -9,11 +9,12 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TOKEN;
 const ID_TELEFONO = process.env.ID_TELEFONO;
 
+// 1. RUTA DE PRUEBA
 app.get('/', (req, res) => {
-    res.send('¡El servidor de WARSHOP está activo y listo para responder! 🚖');
+    res.send('¡El servidor de WARSHOP está activo! 🚖');
 });
 
-// VERIFICACIÓN DEL WEBHOOK
+// 2. VERIFICACIÓN DEL WEBHOOK
 app.get('/webhook', (req, res) => {
     const VERIFY_TOKEN = "warshop2026";
     const mode = req.query["hub.mode"];
@@ -27,7 +28,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// RECIBIR MENSAJES Y PROCESAR BOTONES
+// 3. RECIBIR MENSAJES Y PROCESAR ACCIONES
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body.entry?.[0];
@@ -38,21 +39,27 @@ app.post('/webhook', async (req, res) => {
         if (message) {
             const telefonoCliente = message.from;
 
-            // Si el cliente escribe un texto (Hola, etc.)
+            // --- SI EL CLIENTE ESCRIBE TEXTO ---
             if (message.type === "text") {
-                console.log(`📩 Cliente escribió: ${message.text.body}`);
                 await enviarMenuBienvenida(telefonoCliente);
             } 
 
-            // Si el cliente toca un botón
+            // --- SI EL CLIENTE TOCA UN BOTÓN ---
             else if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
-                console.log(`🔘 Botón presionado: ${responseId}`);
 
+                // Si tocó "Servicio Transporte"
                 if (responseId === "btn_solicitar") {
-                    await enviarRespuesta(telefonoCliente, "¡Excelente! 🚖 Por favor, envíanos tu ubicación para asignarte la unidad más cercana.");
-                } else if (responseId === "btn_afiliar") {
-                    await enviarRespuesta(telefonoCliente, "¡Bienvenido al equipo! 🔑 ¿Deseas afiliar un *Vehículo* o una *Moto*?");
+                    await enviarMenuVehiculos(telefonoCliente);
+                } 
+                // Si tocó "Afiliación"
+                else if (responseId === "btn_afiliar") {
+                    await enviarRespuesta(telefonoCliente, "¡Bienvenido! 🔑 ¿Deseas afiliar un *Vehículo* o una *Moto*? Envíanos tu nombre completo para iniciar.");
+                }
+                // Si seleccionó el tipo de vehículo
+                else if (responseId === "select_moto" || responseId === "select_carro") {
+                    const tipo = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
+                    await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\nAhora, por favor, envíanos tu *Ubicación* (usando el clip de WhatsApp 📎) para buscarte la unidad más cercana.`);
                 }
             }
         }
@@ -63,7 +70,8 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- ÚNICA FUNCIÓN DE BIENVENIDA (DISEÑO PROFESIONAL) ---
+// --- FUNCIONES AUXILIARES (Van al final) ---
+
 async function enviarMenuBienvenida(numero) {
     try {
         await axios({
@@ -77,37 +85,47 @@ async function enviarMenuBienvenida(numero) {
                     type: "button",
                     header: {
                         type: "image",
-                        image: {
-                            // Usando tu ID de imagen más reciente
-                            link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr"
-                        }
+                        image: { link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr" }
                     },
-                    body: {
-                        text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\n\nTu plataforma de transporte confiable.\n\n¿Qué deseas hacer hoy?"
-                    },
+                    body: { text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\nTu plataforma de transporte confiable.\n¿Qué deseas hacer hoy?" },
                     action: {
                         buttons: [
-                            { 
-                                type: "reply", 
-                                reply: { id: "btn_solicitar", title: "Servicio Transporte" } 
-                            },
-                            { 
-                                type: "reply", 
-                                reply: { id: "btn_afiliar", title: "Afiliación" } 
-                            }
+                            { type: "reply", reply: { id: "btn_solicitar", title: "Servicio Transporte" } },
+                            { type: "reply", reply: { id: "btn_afiliar", title: "Afiliacion" } }
                         ]
                     }
                 }
             },
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
         });
-        console.log("✅ Menú de Bienvenida (App Look) enviado");
-    } catch (error) {
-        console.error("❌ Error enviando menú:", error.response?.data || error.message);
-    }
+    } catch (error) { console.error("Error Bienvenida:", error.response?.data); }
 }
 
-// FUNCIÓN PARA RESPUESTAS DE TEXTO
+async function enviarMenuVehiculos(numero) {
+    try {
+        await axios({
+            method: "POST",
+            url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
+            data: {
+                messaging_product: "whatsapp",
+                to: numero,
+                type: "interactive",
+                interactive: {
+                    type: "button",
+                    body: { text: "¡Excelente! 🚖 ¿En qué tipo de unidad prefieres viajar hoy?" },
+                    action: {
+                        buttons: [
+                            { type: "reply", reply: { id: "select_moto", title: "🛵 Moto" } },
+                            { type: "reply", reply: { id: "select_carro", title: "🚗 Carro" } }
+                        ]
+                    }
+                }
+            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        });
+    } catch (error) { console.error("Error Vehículos:", error.response?.data); }
+}
+
 async function enviarRespuesta(numero, texto) {
     try {
         await axios({
@@ -121,9 +139,7 @@ async function enviarRespuesta(numero, texto) {
             },
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
         });
-    } catch (error) {
-        console.error("❌ Error al enviar texto:", error.response?.data || error.message);
-    }
+    } catch (error) { console.error("Error Texto:", error.response?.data); }
 }
 
 app.listen(PORT, () => {

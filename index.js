@@ -36,30 +36,28 @@ app.post('/webhook', async (req, res) => {
 
         if (message) {
             const telefonoCliente = message.from;
-            
-            // Verificamos si es un mensaje de texto normal
+
+            // CASO A: El cliente escribe un texto (Hola, Buenos días, etc.)
             if (message.type === "text") {
-                console.log(`📩 Texto de ${telefonoCliente}: "${message.text.body}"`);
-                // Cuando escriben cualquier cosa, mandamos el menú de bienvenida
+                console.log(`📩 Cliente escribió: ${message.text.body}`);
                 await enviarMenuBienvenida(telefonoCliente);
             } 
-            
-            // Verificamos si el cliente tocó un botón
+
+            // CASO B: El cliente toca uno de los botones del menú
             else if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
-                console.log(`🔘 Botón tocado por ${telefonoCliente}: ${responseId}`);
+                console.log(`🔘 Botón presionado: ${responseId}`);
 
                 if (responseId === "btn_solicitar") {
-                    await enviarRespuesta(telefonoCliente, "¡Perfecto! 🚖 Por favor, envíanos tu ubicación actual para asignarte el vehículo más cercano.");
+                    await enviarRespuesta(telefonoCliente, "¡Excelente! 🚖 Por favor, envíanos tu ubicación para asignarte la unidad más cercana.");
                 } else if (responseId === "btn_afiliar") {
-                    await enviarRespuesta(telefonoCliente, "¡Qué bueno que quieras unirte! 🔑 Por favor, dinos si tienes *Carro* o *Moto* para darte los requisitos de suscripción.");
+                    await enviarRespuesta(telefonoCliente, "¡Bienvenido al equipo! 🔑 ¿Deseas afiliar un *Vehículo* o una *Moto*?");
                 }
             }
         }
-
         res.sendStatus(200);
     } catch (error) {
-        console.error("❌ Error procesando el mensaje:", error);
+        console.error("❌ Error:", error);
         res.sendStatus(500);
     }
 });
@@ -134,4 +132,38 @@ app.listen(PORT, () => {
     console.log(`🚀 Motor de WARSHOP rugiendo en el puerto ${PORT}`);
 });
 
-
+async function enviarMenuBienvenida(numero) {
+    try {
+        await axios({
+            method: "POST",
+            url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
+            data: {
+                messaging_product: "whatsapp",
+                to: numero,
+                type: "interactive",
+                interactive: {
+                    type: "button",
+                    header: {
+                        type: "image",
+                        image: {
+                            // 👉 AQUÍ PEGAS TU LINK DE GOOGLE DRIVE (EL QUE CONVERTIMOS)
+                            link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr"
+                        }
+                    },
+                    body: {
+                        text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\nTu plataforma de transporte confiable.\n¿Qué deseas hacer hoy?"
+                    },
+                    action: {
+                        buttons: [
+                            { type: "reply", reply: { id: "btn_solicitar", title: "Solicitar Servicio" } },
+                            { type: "reply", reply: { id: "btn_afiliar", title: "Afiliación" } }
+                        ]
+                    }
+                }
+            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        });
+    } catch (error) {
+        console.error("❌ Error enviando menú:", error.response?.data || error.message);
+    }
+}

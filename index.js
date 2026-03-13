@@ -9,12 +9,10 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TOKEN;
 const ID_TELEFONO = process.env.ID_TELEFONO;
 
-// 1. RUTA DE PRUEBA
 app.get('/', (req, res) => {
-    res.send('¡El servidor de WARSHOP está activo! 🚖');
+    res.send('¡El motor de WARSHOP está encendido! 🚖');
 });
 
-// 2. VERIFICACIÓN DEL WEBHOOK
 app.get('/webhook', (req, res) => {
     const VERIFY_TOKEN = "warshop2026";
     const mode = req.query["hub.mode"];
@@ -28,7 +26,6 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 3. RECIBIR MENSAJES Y PROCESAR ACCIONES
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body.entry?.[0];
@@ -39,38 +36,46 @@ app.post('/webhook', async (req, res) => {
         if (message) {
             const telefonoCliente = message.from;
 
-            // --- SI EL CLIENTE ESCRIBE TEXTO ---
+            // 1. SI RECIBIMOS TEXTO (BIENVENIDA)
             if (message.type === "text") {
                 await enviarMenuBienvenida(telefonoCliente);
             } 
 
-            // --- SI EL CLIENTE TOCA UN BOTÓN ---
+            // 2. SI TOCAN UN BOTÓN INTERACTIVO
             else if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
 
-                // Si tocó "Servicio Transporte"
                 if (responseId === "btn_solicitar") {
                     await enviarMenuVehiculos(telefonoCliente);
                 } 
-                // Si tocó "Afiliación"
                 else if (responseId === "btn_afiliar") {
-                    await enviarRespuesta(telefonoCliente, "¡Bienvenido! 🔑 ¿Deseas afiliar un *Vehículo* o una *Moto*? Envíanos tu nombre completo para iniciar.");
+                    await enviarRespuesta(telefonoCliente, "¡Bienvenido al equipo! 🔑 Por favor, envíanos tu *Nombre completo* y una foto de tu *Cédula* para iniciar el registro.");
                 }
-                // Si seleccionó el tipo de vehículo
                 else if (responseId === "select_moto" || responseId === "select_carro") {
                     const tipo = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
-                    await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\nAhora, por favor, envíanos tu *Ubicación* (usando el clip de WhatsApp 📎) para buscarte la unidad más cercana.`);
+                    await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\n📍 Ahora, por favor, envíanos tu *Ubicación Actual*:\n\n1. Toca el clip (📎) o el signo (+).\n2. Elige "Ubicación".\n3. Selecciona "Ubicación en tiempo real" o "Enviar mi ubicación actual".`);
                 }
+            }
+
+            // 3. SI EL CLIENTE ENVÍA SU UBICACIÓN GPS 📍
+            else if (message.type === "location") {
+                const lat = message.location.latitude;
+                const lng = message.location.longitude;
+                
+                console.log(`📍 Coordenadas de ${telefonoCliente}: Lat ${lat}, Lng ${lng}`);
+                
+                // Aquí el bot confirma y tú podrías recibir esta info en un grupo de conductores
+                await enviarRespuesta(telefonoCliente, "¡Ubicación recibida con éxito! ✅📍 Estamos buscando la unidad de *Warshop Mobility* más cercana a tu posición. Te avisaremos en un momento.");
             }
         }
         res.sendStatus(200);
     } catch (error) {
-        console.error("❌ Error:", error);
+        console.error("❌ Error en el motor:", error);
         res.sendStatus(500);
     }
 });
 
-// --- FUNCIONES AUXILIARES (Van al final) ---
+// --- FUNCIONES DE ENVÍO ---
 
 async function enviarMenuBienvenida(numero) {
     try {

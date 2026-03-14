@@ -16,7 +16,7 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Base de datos Warshop conectada'))
     .catch(err => console.error('❌ Error DB:', err));
 
-// 2. MODELO DE DATOS (Con filtro de 3 días)
+// 2. MODELO DE DATOS
 const ConductorSchema = new mongoose.Schema({
     telefono: { type: String, unique: true },
     tipo: String, 
@@ -31,7 +31,7 @@ const ConductorSchema = new mongoose.Schema({
 const Conductor = mongoose.model('Conductor', ConductorSchema);
 
 app.get('/', (req, res) => {
-    res.send('🚀 El motor de WARSHOP MOBILITY está encendido y con imagen.');
+    res.send('🚀 El motor de WARSHOP MOBILITY está rugiendo.');
 });
 
 // 3. VERIFICACIÓN DEL WEBHOOK
@@ -54,9 +54,10 @@ app.post('/webhook', async (req, res) => {
             const telefonoCliente = message.from;
             let conductor = await Conductor.findOne({ telefono: telefonoCliente });
 
-            // --- A. LÓGICA DE BOTONES ---
+            // --- A. LÓGICA DE BOTONES (INTERACTIVOS) ---
             if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
+                console.log(`🔘 Botón presionado: ${responseId}`); // Esto te ayudará a ver qué llega en Render
 
                 if (responseId === "btn_afiliar") {
                     await enviarMenuTipoConductor(telefonoCliente);
@@ -73,9 +74,14 @@ app.post('/webhook', async (req, res) => {
                 else if (responseId === "btn_solicitar") {
                     await enviarMenuVehiculos(telefonoCliente);
                 }
+                // --- AQUÍ ESTABA EL ERROR: Faltaban estas líneas ---
+                else if (responseId === "select_moto" || responseId === "select_carro") {
+                    const unidad = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
+                    await enviarRespuesta(telefonoCliente, `Has elegido: *${unidad}*.\n\n📍 Ahora, envíanos tu *Ubicación Actual* por WhatsApp para buscarte la unidad más cercana.`);
+                }
             }
 
-            // --- B. LÓGICA DE TEXTO (PASO A PASO) ---
+            // --- B. LÓGICA DE TEXTO (REGISTRO) ---
             else if (message.type === "text") {
                 const texto = message.text.body;
 
@@ -127,6 +133,11 @@ app.post('/webhook', async (req, res) => {
                 else {
                     await enviarMenuBienvenida(telefonoCliente);
                 }
+            }
+
+            // --- C. LÓGICA DE UBICACIÓN ---
+            else if (message.type === "location") {
+                await enviarRespuesta(telefonoCliente, "¡Ubicación recibida! ✅ Estamos buscando tu unidad de *Warshop*. Te avisaremos en un momento.");
             }
         }
         res.sendStatus(200);
@@ -223,7 +234,7 @@ async function enviarMenuVehiculos(numero) {
 }
 
 async function enviarRespuestaFinal(numero, nombre) {
-    const texto = `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará automáticamente de nuestro sistema. ¡Te esperamos! 🚖`;
+    const texto = `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará automáticamente. ¡Te esperamos! 🚖`;
     await enviarRespuesta(numero, texto);
 }
 

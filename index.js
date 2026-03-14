@@ -45,7 +45,7 @@ app.post('/webhook', async (req, res) => {
 
         if (message) {
             const telefonoCliente = message.from;
-            console.log(`📩 Mensaje recibido de ${telefonoCliente}`);
+            console.log(`📩 MENSAJE RECIBIDO de ${telefonoCliente} (Tipo: ${message.type})`);
 
             let conductor = await Conductor.findOne({ telefono: telefonoCliente });
 
@@ -67,8 +67,8 @@ app.post('/webhook', async (req, res) => {
             }
             else if (message.type === "text") {
                 const texto = message.text.body;
+                // Si el conductor ya existe y está en proceso de registro
                 if (conductor && conductor.status === 'Provisional' && conductor.fase !== 'finalizado') {
-                    // Lógica de registro paso a paso... (Se mantiene igual que la tenías)
                     switch (conductor.fase) {
                         case 'preguntar_nombre':
                             conductor.nombre = texto; conductor.fase = 'preguntar_cedula';
@@ -106,6 +106,8 @@ app.post('/webhook', async (req, res) => {
                             break;
                     }
                 } else {
+                    // Si ya terminó o es nuevo, enviamos bienvenida
+                    console.log("-> Enviando Menú de Bienvenida...");
                     await enviarMenuBienvenida(telefonoCliente);
                 }
             }
@@ -114,23 +116,26 @@ app.post('/webhook', async (req, res) => {
     } catch (error) { console.error("❌ Error motor:", error); res.sendStatus(500); }
 });
 
-// --- FUNCIONES DE ENVÍO CORREGIDAS ---
+// --- FUNCIONES DE ENVÍO CON LOGS DE ÉXITO ---
 
 async function enviarRespuesta(numero, texto) {
     try {
-        await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, 
+        console.log(`📤 Intentando enviar texto a ${numero}...`);
+        const res = await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, 
         { messaging_product: "whatsapp", to: numero, type: "text", text: { body: texto } },
         { headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } });
-    } catch (e) { console.error("❌ Error enviarRespuesta:", e.response?.data || e.message); }
+        console.log("✅ TEXTO ENVIADO!");
+    } catch (e) { console.error("❌ ERROR enviarRespuesta:", JSON.stringify(e.response?.data) || e.message); }
 }
 
 async function enviarMenuBienvenida(numero) {
     try {
-        await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, {
+        console.log(`📤 Intentando enviar Bienvenida a ${numero}...`);
+        // NOTA: Si el link de Google Drive falla, Meta bloquea el mensaje. Prueba quitando el 'header' si sigue fallando.
+        const res = await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, {
             messaging_product: "whatsapp", to: numero, type: "interactive",
             interactive: {
                 type: "button",
-                header: { type: "image", image: { link: "https://drive.google.com/uc?export=view&id=174zehhNwqJg6yYKqxmOkpewoIhdsMytr" } },
                 body: { text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\n¿Qué deseas hacer hoy?" },
                 action: {
                     buttons: [
@@ -140,12 +145,14 @@ async function enviarMenuBienvenida(numero) {
                 }
             }
         }, { headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } });
-    } catch (e) { console.error("❌ Error MenuBienvenida:", e.response?.data || e.message); }
+        console.log("✅ BIENVENIDA ENVIADA!");
+    } catch (e) { console.error("❌ ERROR MenuBienvenida:", JSON.stringify(e.response?.data) || e.message); }
 }
 
 async function enviarMenuTipoConductor(numero) {
     try {
-        await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, {
+        console.log(`📤 Intentando enviar Menú Tipo a ${numero}...`);
+        const res = await axios.post(`https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, {
             messaging_product: "whatsapp", to: numero, type: "interactive",
             interactive: {
                 type: "button",
@@ -158,11 +165,12 @@ async function enviarMenuTipoConductor(numero) {
                 }
             }
         }, { headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } });
-    } catch (e) { console.error("❌ Error TipoConductor:", e.response?.data || e.message); }
+        console.log("✅ MENÚ TIPO ENVIADO!");
+    } catch (e) { console.error("❌ ERROR TipoConductor:", JSON.stringify(e.response?.data) || e.message); }
 }
 
 async function enviarRespuestaFinal(numero, nombre) {
-    await enviarRespuesta(numero, `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará.`);
+    await enviarRespuesta(numero, `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina.`);
 }
 
 app.listen(PORT, () => { console.log(`🚀 Warshop rugiendo en puerto ${PORT}`); });

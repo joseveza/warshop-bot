@@ -26,7 +26,7 @@ const ConductorSchema = new mongoose.Schema({
     cedula: String,
     vehiculo: { modelo: String, año: String, placa: String, color: String },
     linea: { nombre: String, rif: String },
-    fotoCarro: String, // 🟢 Campo preparado para la imagen del vehículo sin fondos
+    fotoCarro: String, 
     fase: { type: String, default: 'inicio' },
     status: { type: String, default: 'Provisional' },
     estadoTurno: { type: String, default: 'Inactivo', enum: ['Inactivo', 'Activo', 'Ocupado'] },
@@ -46,7 +46,7 @@ const ViajeSchema = new mongoose.Schema({
     coordenadasOrigen: { type: [Number] }, 
     destino: String,
     fase: { type: String, default: 'inicio' }, 
-    conductorAsignado: { type: String }, // 🟢 NUEVO: Registra al conductor notificado
+    conductorAsignado: { type: String }, 
     createdAt: { type: Date, default: Date.now, index: { expires: '1h' } } 
 });
 const Viaje = mongoose.model('Viaje', ViajeSchema);
@@ -119,23 +119,33 @@ app.post('/webhook', async (req, res) => {
                     await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Inactivo' });
                     await enviarRespuesta(telefonoCliente, `Jornada finalizada 🔴.\n¡Buen descanso!`);
                 }
-                // 🟢 NUEVO: Lógica cuando el conductor responde a la alerta
+                
+                // 🟢 Lógica cuando el conductor ACEPTA o RECHAZA la alerta
                 else if (responseId === "btn_aceptar_viaje") {
                     const viajePendiente = await Viaje.findOne({ conductorAsignado: telefonoCliente, fase: 'esperando_conductor' });
                     if (viajePendiente) {
                         await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Ocupado' });
-                        await enviarRespuesta(telefonoCliente, `✅ ¡Viaje Aceptado!\n\nDirígete al punto de origen: ${viajePendiente.origen}\nDestino: ${viajePendiente.destino}`);
                         
+                        // 🟢 Construimos el link de navegación REAL para el conductor al aceptar
+                        let enlaceNavegacion = viajePendiente.origen; // Por defecto el texto
+                        if (viajePendiente.coordenadasOrigen && viajePendiente.coordenadasOrigen.length === 2) {
+                            const lat = viajePendiente.coordenadasOrigen[1];
+                            const lng = viajePendiente.coordenadasOrigen[0];
+                            enlaceNavegacion = `https://maps.google.com/?q=${lat},${lng}`;
+                        }
+
+                        await enviarRespuesta(telefonoCliente, `✅ ¡Viaje Aceptado!\n\nToca el enlace para iniciar la ruta hacia el cliente:\n🗺️ ${enlaceNavegacion}\n\nDestino: ${viajePendiente.destino}`);
+                        
+                        // Le avisamos al cliente
                         viajePendiente.fase = 'en_curso';
                         await viajePendiente.save();
                         
                         const elConductor = await Conductor.findOne({ telefono: telefonoCliente });
                         
-                        // Envía la foto clara del carro en lugar de un fondo de mapa
                         const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pBfkbfXx/mobility.png";
                         await enviarImagen(viajePendiente.telefonoCliente, imagenFicha);
                         
-                        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio.`;
+                        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio y va en camino.`;
                         await enviarRespuesta(viajePendiente.telefonoCliente, textoFicha);
                     } else {
                         await enviarRespuesta(telefonoCliente, "⏳ Este viaje ya expiró o fue tomado por otro conductor.");
@@ -247,15 +257,26 @@ async function procesarViaje(numeroCliente, viaje) {
     }
 }
 
+// 🟢 NUEVA FUNCIÓN CON LINK REAL A GOOGLE MAPS EN LA ALERTA
 async function enviarAlertaConductor(numeroConductor, viaje) {
     try {
+        let textoOrigen = viaje.origen;
+        
+        // Si hay coordenadas, armamos el link correcto de Google Maps
+        if (viaje.coordenadasOrigen && viaje.coordenadasOrigen.length === 2) {
+            const lat = viaje.coordenadasOrigen[1];
+            const lng = viaje.coordenadasOrigen[0];
+            const linkMapa = `https://maps.google.com/?q=${lat},${lng}`;
+            textoOrigen = `📍 Ubicación GPS\n🗺️ Mapa: ${linkMapa}`;
+        }
+
         await axios({
             method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
             data: {
                 messaging_product: "whatsapp", to: numeroConductor, type: "interactive",
                 interactive: {
                     type: "button",
-                    body: { text: `🚨 *¡NUEVO SERVICIO CERCANO!* 🚨\n\n📍 *Origen:* ${viaje.origen}\n🏁 *Destino:* ${viaje.destino}\n\n¿Deseas tomar este viaje?` },
+                    body: { text: `🚨 *¡NUEVO SERVICIO CERCANO!* 🚨\n\n*Origen:*\n${textoOrigen}\n\n🏁 *Destino:* ${viaje.destino}\n\n¿Deseas tomar este viaje?` },
                     action: {
                         buttons: [
                             { type: "reply", reply: { id: "btn_aceptar_viaje", title: "✅ Aceptar Viaje" } },

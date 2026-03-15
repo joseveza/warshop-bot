@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warshop Mobility - Radar</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .contenedor {
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            width: 80%;
+            max-width: 350px;
+        }
+        h1 { font-size: 22px; color: #f39c12; margin-bottom: 5px; }
+        .estado {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .estado-buscando { background-color: #f39c12; color: #000; }
+        .estado-activo { background-color: #27ae60; color: #fff; }
+        .estado-error { background-color: #c0392b; color: #fff; }
+        p { font-size: 14px; color: #aaaaaa; }
+        .animacion-radar {
+            width: 50px; height: 50px;
+            border-radius: 50%;
+            background-color: rgba(39, 174, 96, 0.3);
+            margin: 0 auto 20px auto;
+            animation: latido 1.5s infinite ease-in-out;
+        }
+        @keyframes latido {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="contenedor">
+        <h1>Warshop Mobility 🚖</h1>
+        <p>Conductor: <span id="texto-telefono">Cargando...</span></p>
+        
+        <div id="indicador-visual" class=""></div>
+        <div id="caja-estado" class="estado estado-buscando">Iniciando sistema...</div>
+        
+        <p>⚠️ Mantén esta pantalla abierta y la pantalla encendida para recibir viajes.</p>
+    </div>
+
+    <script>
+        // 1. Extraer el teléfono del conductor desde el enlace (ej: misitio.com/tracker.html?telefono=04141234567)
+        const urlParams = new URLSearchParams(window.location.search);
+        const telefonoConductor = urlParams.get('telefono');
+        const cajaEstado = document.getElementById('caja-estado');
+        const indicadorVisual = document.getElementById('indicador-visual');
+
+        if (!telefonoConductor) {
+            cajaEstado.className = "estado estado-error";
+            cajaEstado.innerText = "❌ Error: Enlace inválido.";
+            document.getElementById('texto-telefono').innerText = "Desconocido";
+        } else {
+            document.getElementById('texto-telefono').innerText = telefonoConductor;
+            iniciarRadar();
+        }
+
+        // 2. Activar el GPS del teléfono
+        function iniciarRadar() {
+            cajaEstado.innerText = "⏳ Solicitando permiso GPS...";
+            
+            if ("geolocation" in navigator) {
+                // watchPosition es la magia: se dispara automáticamente cada vez que el carro se mueve
+                navigator.geolocation.watchPosition(enviarCoordenadas, manejarErrorGPS, {
+                    enableHighAccuracy: true, // Usa el chip GPS real, no solo las antenas
+                    maximumAge: 0,
+                    timeout: 10000
+                });
+            } else {
+                cajaEstado.className = "estado estado-error";
+                cajaEstado.innerText = "❌ Tu navegador no soporta GPS.";
+            }
+        }
+
+        // 3. Enviar las coordenadas al servidor de Warshop
+        function enviarCoordenadas(posicion) {
+            const lat = posicion.coords.latitude;
+            const lng = posicion.coords.longitude;
+
+            // Cambiar la interfaz a verde y animada
+            cajaEstado.className = "estado estado-activo";
+            cajaEstado.innerText = "🟢 Rastreo Activo";
+            indicadorVisual.className = "animacion-radar";
+
+            // Enviar los datos por detrás a tu archivo index.js
+            fetch('/actualizar-gps', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    telefono: telefonoConductor, 
+                    latitud: lat, 
+                    longitud: lng 
+                })
+            })
+            .then(respuesta => {
+                if(!respuesta.ok) console.error("Error en el servidor al guardar GPS");
+            })
+            .catch(error => console.error("Error de conexión:", error));
+        }
+
+        // 4. Manejo de errores (si el conductor deniega el permiso)
+        function manejarErrorGPS(error) {
+            cajaEstado.className = "estado estado-error";
+            indicadorVisual.className = "";
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    cajaEstado.innerText = "❌ Permiso GPS denegado.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    cajaEstado.innerText = "❌ Señal GPS perdida.";
+                    break;
+                case error.TIMEOUT:
+                    cajaEstado.innerText = "❌ Tiempo de espera agotado.";
+                    break;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -27,8 +27,15 @@ const ConductorSchema = new mongoose.Schema({
     linea: { nombre: String, rif: String },
     fase: { type: String, default: 'inicio' },
     status: { type: String, default: 'Provisional' },
+    // 🟢 NUEVO: Campo geoespacial para la ubicación del conductor
+    ubicacion: {
+        type: { type: String, enum: ['Point'], default: 'Point' },
+        coordinates: { type: [Number], default: [0, 0] } // Siempre [Longitud, Latitud]
+    },
     createdAt: { type: Date, default: Date.now, index: { expires: '3d' } }
 });
+// 🟢 NUEVO: Índice mágico para búsquedas radiales ultrarrápidas
+ConductorSchema.index({ ubicacion: "2dsphere" });
 const Conductor = mongoose.model('Conductor', ConductorSchema);
 
 // B. Para los Viajes (Clientes)
@@ -36,14 +43,16 @@ const ViajeSchema = new mongoose.Schema({
     telefonoCliente: { type: String, unique: true },
     vehiculo: String,
     origen: String,
+    // 🟢 NUEVO: Guardar las coordenadas matemáticas del origen del cliente
+    coordenadasOrigen: { type: [Number] }, 
     destino: String,
-    fase: { type: String, default: 'inicio' }, // 'pidiendo_origen', 'pidiendo_destino', 'finalizado'
-    createdAt: { type: Date, default: Date.now, index: { expires: '1h' } } // Se borra en 1 hora
+    fase: { type: String, default: 'inicio' }, 
+    createdAt: { type: Date, default: Date.now, index: { expires: '1h' } } 
 });
 const Viaje = mongoose.model('Viaje', ViajeSchema);
 
 app.get('/', (req, res) => {
-    res.send('🚀 El motor de WARSHOP MOBILITY está operando con Rutas y Destinos.');
+    res.send('🚀 El motor de WARSHOP MOBILITY está operando con Rutas, Destinos y Geoasignación.');
 });
 
 // 3. VERIFICACIÓN DEL WEBHOOK
@@ -88,7 +97,6 @@ app.post('/webhook', async (req, res) => {
                 }
                 else if (responseId === "select_moto" || responseId === "select_carro") {
                     const unidad = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
-                    // Iniciamos el registro del viaje
                     await Viaje.findOneAndUpdate(
                         { telefonoCliente: telefonoCliente },
                         { vehiculo: unidad, fase: 'pidiendo_origen' },
@@ -102,7 +110,6 @@ app.post('/webhook', async (req, res) => {
             else if (message.type === "text") {
                 const texto = message.text.body;
 
-                // 1. ¿Es un CONDUCTOR registrándose?
                 if (conductor && conductor.status === 'Provisional' && conductor.fase && conductor.fase !== 'finalizado' && conductor.fase !== 'inicio') {
                     switch (conductor.fase) {
                         case 'preguntar_nombre': conductor.nombre = texto; conductor.fase = 'preguntar_cedula'; break;
@@ -125,7 +132,6 @@ app.post('/webhook', async (req, res) => {
                         await enviarRespuesta(telefonoCliente, preguntas[conductor.fase]);
                     }
                 } 
-                // 2. ¿Es un CLIENTE pidiendo viaje?
                 else if (viaje && viaje.fase !== 'finalizado' && viaje.fase !== 'inicio') {
                     if (viaje.fase === 'pidiendo_origen') {
                         viaje.origen = texto;
@@ -140,7 +146,6 @@ app.post('/webhook', async (req, res) => {
                         await procesarViaje(telefonoCliente, viaje);
                     }
                 }
-                // 3. Si no es ninguno, menú principal
                 else {
                     await enviarMenuBienvenida(telefonoCliente);
                 }
@@ -149,21 +154,26 @@ app.post('/webhook', async (req, res) => {
             // --- C. LÓGICA DE UBICACIÓN (Origen o Destino) ---
             else if (message.type === "location") {
                 if (viaje && viaje.fase !== 'finalizado' && viaje.fase !== 'inicio') {
-                    const ubicacion = `Lat: ${message.location.latitude}, Lng: ${message.location.longitude}`;
+                    const lat = message.location.latitude;
+                    const lng = message.location.longitude;
+                    const ubicacionTexto = `Lat: ${lat}, Lng: ${lng}`;
                     
                     if (viaje.fase === 'pidiendo_origen') {
-                        viaje.origen = ubicacion;
+                        viaje.origen = ubicacionTexto;
+                        // 🟢 NUEVO: Guardamos el array [Longitud, Latitud] para la matemática
+                        viaje.coordenadasOrigen = [lng, lat]; 
                         viaje.fase = 'pidiendo_destino';
                         await viaje.save();
                         await enviarRespuesta(telefonoCliente, "🎯 ¡Origen guardado! Ahora, ¿a dónde te diriges? Escribe tu *Destino* o envía la ubicación.");
                     } 
                     else if (viaje.fase === 'pidiendo_destino') {
-                        viaje.destino = ubicacion;
+                        viaje.destino = ubicacionTexto;
                         viaje.fase = 'finalizado';
                         await viaje.save();
                         await procesarViaje(telefonoCliente, viaje);
                     }
                 } else {
+                    // Si un conductor manda su ubicación por WhatsApp, podríamos actualizarla aquí en el futuro.
                     await enviarRespuesta(telefonoCliente, "📍 Ubicación recibida, pero no tienes un viaje activo. Escribe 'Hola' para ver el menú.");
                 }
             }
@@ -175,22 +185,48 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- FUNCIÓN QUE SIMULA LA ASIGNACIÓN Y EL PRECIO ---
+// --- 🟢 NUEVO: FUNCIÓN DE ASIGNACIÓN IMPARCIAL Y REAL ---
 async function procesarViaje(numero, viaje) {
-    await enviarRespuesta(numero, "✅ Ruta confirmada.\n\n*Calculando tarifa y buscando tu unidad...* 🔎📡");
+    await enviarRespuesta(numero, "✅ Ruta confirmada.\n\n*Calculando tarifa y buscando al conductor más cercano...* 🔎📡");
+
+    let conductorAsignado = null;
+
+    // Si el cliente nos envió GPS de origen, usamos la magia de MongoDB
+    if (viaje.coordenadasOrigen && viaje.coordenadasOrigen.length === 2) {
+        conductorAsignado = await Conductor.findOne({
+            fase: 'finalizado', // Solo conductores que hayan terminado el registro
+            ubicacion: {
+                $near: {
+                    $geometry: {
+                        type: "Point",
+                        coordinates: viaje.coordenadasOrigen // [Lng, Lat] del cliente
+                    },
+                    $maxDistance: 8000 // Busca en un radio de 8 km (8000 metros)
+                }
+            }
+        });
+    } else {
+        // Si el cliente escribió "Centro" (texto), asignamos a cualquier conductor libre (fallback temporal)
+        conductorAsignado = await Conductor.findOne({ fase: 'finalizado' });
+    }
 
     // Esperamos 4 segundos para darle realismo
     setTimeout(async () => {
-        // 1. Enviamos la "Ficha pre-hecha" (Imagen)
-        await enviarImagen(numero, "https://i.ibb.co/pBfkbfXx/mobility.png");
-        
-        // 2. Enviamos los datos detallados y la tarifa
-        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* Juan Pérez\n🚗 *Vehículo:* Toyota Corolla (Blanco)\n🔢 *Placa:* ABC-123\n\n🛣️ *Ruta:* Registrada en sistema\n💵 *Tarifa Estimada:* $3.50\n\n📍 Llegando en aprox. 3 minutos.`;
-        await enviarRespuesta(numero, textoFicha);
+        if (conductorAsignado) {
+            // 1. Enviamos la "Ficha pre-hecha" (Imagen)
+            await enviarImagen(numero, "https://i.ibb.co/pBfkbfXx/mobility.png");
+            
+            // 2. 🟢 NUEVO: Llenamos la ficha con los datos REALES del conductor encontrado
+            const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${conductorAsignado.nombre}\n🚗 *Vehículo:* ${conductorAsignado.vehiculo.modelo} (${conductorAsignado.vehiculo.color})\n🔢 *Placa:* ${conductorAsignado.vehiculo.placa}\n\n🛣️ *Ruta:* Registrada en sistema\n💵 *Tarifa Estimada:* $3.50\n\n📍 Llegando en aprox. 3 minutos.`;
+            
+            await enviarRespuesta(numero, textoFicha);
+        } else {
+            await enviarRespuesta(numero, "Lo sentimos mucho. En este momento no hay conductores disponibles cerca de tu área. 😔 Intenta de nuevo en unos minutos.");
+        }
     }, 4000);
 }
 
-// --- FUNCIONES DE ENVÍO BÁSICAS ---
+// --- FUNCIONES DE ENVÍO BÁSICAS (Quedan iguales) ---
 
 async function enviarRespuesta(numero, texto) {
     try {

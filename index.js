@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const mongoose = require('mongoose');
-const path = require('path'); // 🟢 NUEVO: Necesario para enviar el archivo HTML
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -11,7 +11,6 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TOKEN;
 const ID_TELEFONO = process.env.ID_TELEFONO;
 const MONGO_URI = process.env.MONGO_URI;
-// 🟢 IMPORTANTE: Cambia esto por tu dominio real de ngrok o tu servidor (ej: https://tu-app.railway.app)
 const DOMINIO_PUBLICO = process.env.DOMINIO_PUBLICO || "https://warshop-bot.onrender.com";
 
 // 1. CONEXIÓN A MONGODB
@@ -20,7 +19,6 @@ mongoose.connect(MONGO_URI)
     .catch(err => console.error('❌ Error DB:', err));
 
 // 2. MODELOS DE DATOS
-// A. Para los Conductores
 const ConductorSchema = new mongoose.Schema({
     telefono: { type: String, unique: true },
     tipo: String, 
@@ -28,9 +26,9 @@ const ConductorSchema = new mongoose.Schema({
     cedula: String,
     vehiculo: { modelo: String, año: String, placa: String, color: String },
     linea: { nombre: String, rif: String },
+    fotoCarro: String, // 🟢 Campo preparado para la imagen del vehículo sin fondos
     fase: { type: String, default: 'inicio' },
     status: { type: String, default: 'Provisional' },
-    // 🟢 NUEVO: El estado de trabajo del conductor
     estadoTurno: { type: String, default: 'Inactivo', enum: ['Inactivo', 'Activo', 'Ocupado'] },
     ubicacion: {
         type: { type: String, enum: ['Point'], default: 'Point' },
@@ -41,7 +39,6 @@ const ConductorSchema = new mongoose.Schema({
 ConductorSchema.index({ ubicacion: "2dsphere" });
 const Conductor = mongoose.model('Conductor', ConductorSchema);
 
-// B. Para los Viajes (Clientes)
 const ViajeSchema = new mongoose.Schema({
     telefonoCliente: { type: String, unique: true },
     vehiculo: String,
@@ -49,17 +46,14 @@ const ViajeSchema = new mongoose.Schema({
     coordenadasOrigen: { type: [Number] }, 
     destino: String,
     fase: { type: String, default: 'inicio' }, 
+    conductorAsignado: { type: String }, // 🟢 NUEVO: Registra al conductor notificado
     createdAt: { type: Date, default: Date.now, index: { expires: '1h' } } 
 });
 const Viaje = mongoose.model('Viaje', ViajeSchema);
 
-// 🟢 NUEVO: 2.5 RUTAS DEL RADAR WEB
-// Esta ruta sirve la página web al conductor
-app.get('/tracker', (req, res) => {
-    res.sendFile(path.join(__dirname, 'tracker.html'));
-});
+// RUTAS DEL RADAR WEB
+app.get('/tracker', (req, res) => { res.sendFile(path.join(__dirname, 'tracker.html')); });
 
-// Esta ruta recibe silenciosamente el GPS desde el tracker.html
 app.post('/actualizar-gps', async (req, res) => {
     const { telefono, latitud, longitud } = req.body;
     try {
@@ -68,25 +62,18 @@ app.post('/actualizar-gps', async (req, res) => {
             { ubicacion: { type: "Point", coordinates: [longitud, latitud] } }
         );
         res.sendStatus(200);
-    } catch (error) {
-        console.error("❌ Error guardando GPS:", error);
-        res.sendStatus(500);
-    }
+    } catch (error) { res.sendStatus(500); }
 });
 
-app.get('/', (req, res) => {
-    res.send('🚀 El motor de WARSHOP MOBILITY está operando con Rutas, Destinos y Geoasignación Activa.');
-});
+app.get('/', (req, res) => { res.send('🚀 WARSHOP MOBILITY operando.'); });
 
-// 3. VERIFICACIÓN DEL WEBHOOK
+// WEBHOOK
 app.get('/webhook', (req, res) => {
-    const VERIFY_TOKEN = "warshop2026";
-    if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === VERIFY_TOKEN) {
+    if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === "warshop2026") {
         res.status(200).send(req.query["hub.challenge"]);
     } else { res.sendStatus(403); }
 });
 
-// 4. RECEPCIÓN DE MENSAJES
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body.entry?.[0];
@@ -103,9 +90,7 @@ app.post('/webhook', async (req, res) => {
             if (message.type === "interactive") {
                 const responseId = message.interactive.button_reply.id;
 
-                if (responseId === "btn_afiliar") {
-                    await enviarMenuTipoConductor(telefonoCliente);
-                } 
+                if (responseId === "btn_afiliar") { await enviarMenuTipoConductor(telefonoCliente); } 
                 else if (responseId === "tipo_independiente" || responseId === "tipo_linea") {
                     const tipo = responseId === "tipo_independiente" ? "Independiente" : "De Línea";
                     await Conductor.findOneAndUpdate(
@@ -115,9 +100,7 @@ app.post('/webhook', async (req, res) => {
                     );
                     await enviarRespuesta(telefonoCliente, `Has elegido: *${tipo}*.\n\n📝 ¿Cuál es tu *Nombre y Apellido*?`);
                 }
-                else if (responseId === "btn_solicitar") {
-                    await enviarMenuVehiculos(telefonoCliente);
-                }
+                else if (responseId === "btn_solicitar") { await enviarMenuVehiculos(telefonoCliente); }
                 else if (responseId === "select_moto" || responseId === "select_carro") {
                     const unidad = responseId === "select_moto" ? "Moto 🛵" : "Carro 🚗";
                     await Viaje.findOneAndUpdate(
@@ -127,15 +110,46 @@ app.post('/webhook', async (req, res) => {
                     );
                     await enviarRespuesta(telefonoCliente, `Has elegido: *${unidad}*.\n\n📍 Para comenzar, envíanos tu *Ubicación Actual (Origen)* usando el clip 📎 o escribe tu dirección.`);
                 }
-                // 🟢 NUEVO: Lógica de botones para el turno del conductor
                 else if (responseId === "btn_iniciar_turno") {
                     await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Activo' });
                     const urlTracker = `${DOMINIO_PUBLICO}/tracker?telefono=${telefonoCliente}`;
-                    await enviarRespuesta(telefonoCliente, `¡Jornada iniciada con éxito! 🟢\n\n⚠️ Para recibir viajes de forma automática, debes abrir el siguiente enlace y mantener la pantalla activa:\n\n${urlTracker}`);
+                    await enviarRespuesta(telefonoCliente, `¡Jornada iniciada con éxito! 🟢\n\n⚠️ Mantén abierta esta pantalla para recibir viajes:\n${urlTracker}`);
                 }
                 else if (responseId === "btn_finalizar_turno") {
                     await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Inactivo' });
-                    await enviarRespuesta(telefonoCliente, `Jornada finalizada 🔴.\nYa no recibirás solicitudes de viaje. ¡Buen descanso!`);
+                    await enviarRespuesta(telefonoCliente, `Jornada finalizada 🔴.\n¡Buen descanso!`);
+                }
+                // 🟢 NUEVO: Lógica cuando el conductor responde a la alerta
+                else if (responseId === "btn_aceptar_viaje") {
+                    const viajePendiente = await Viaje.findOne({ conductorAsignado: telefonoCliente, fase: 'esperando_conductor' });
+                    if (viajePendiente) {
+                        await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Ocupado' });
+                        await enviarRespuesta(telefonoCliente, `✅ ¡Viaje Aceptado!\n\nDirígete al punto de origen: ${viajePendiente.origen}\nDestino: ${viajePendiente.destino}`);
+                        
+                        viajePendiente.fase = 'en_curso';
+                        await viajePendiente.save();
+                        
+                        const elConductor = await Conductor.findOne({ telefono: telefonoCliente });
+                        
+                        // Envía la foto clara del carro en lugar de un fondo de mapa
+                        const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pBfkbfXx/mobility.png";
+                        await enviarImagen(viajePendiente.telefonoCliente, imagenFicha);
+                        
+                        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio.`;
+                        await enviarRespuesta(viajePendiente.telefonoCliente, textoFicha);
+                    } else {
+                        await enviarRespuesta(telefonoCliente, "⏳ Este viaje ya expiró o fue tomado por otro conductor.");
+                    }
+                }
+                else if (responseId === "btn_rechazar_viaje") {
+                    await enviarRespuesta(telefonoCliente, "❌ Viaje rechazado. Seguirás disponible para otros servicios.");
+                    const viajePendiente = await Viaje.findOneAndUpdate(
+                        { conductorAsignado: telefonoCliente, fase: 'esperando_conductor' },
+                        { fase: 'finalizado', conductorAsignado: null } 
+                    );
+                    if (viajePendiente) {
+                        await enviarRespuesta(viajePendiente.telefonoCliente, "Lo sentimos, el conductor más cercano no pudo tomar tu viaje. 😔 Intenta solicitarlo de nuevo.");
+                    }
                 }
             }
 
@@ -144,7 +158,6 @@ app.post('/webhook', async (req, res) => {
                 const texto = message.text.body;
                 const textoLimpio = texto.toLowerCase().trim();
 
-                // 🟢 NUEVO: Comando oculto para conductores "turno"
                 if (textoLimpio === "turno" && conductor && conductor.fase === 'finalizado') {
                     await enviarMenuTurno(telefonoCliente);
                 }
@@ -178,9 +191,7 @@ app.post('/webhook', async (req, res) => {
                         await procesarViaje(telefonoCliente, viaje);
                     }
                 }
-                else {
-                    await enviarMenuBienvenida(telefonoCliente);
-                }
+                else { await enviarMenuBienvenida(telefonoCliente); }
             }
 
             // --- C. LÓGICA DE UBICACIÓN ---
@@ -191,16 +202,11 @@ app.post('/webhook', async (req, res) => {
                     const ubicacionTexto = `Lat: ${lat}, Lng: ${lng}`;
                     
                     if (viaje.fase === 'pidiendo_origen') {
-                        viaje.origen = ubicacionTexto;
-                        viaje.coordenadasOrigen = [lng, lat]; 
-                        viaje.fase = 'pidiendo_destino';
-                        await viaje.save();
+                        viaje.origen = ubicacionTexto; viaje.coordenadasOrigen = [lng, lat]; viaje.fase = 'pidiendo_destino'; await viaje.save();
                         await enviarRespuesta(telefonoCliente, "🎯 ¡Origen guardado! Ahora, ¿a dónde te diriges? Escribe tu *Destino* o envía la ubicación.");
                     } 
                     else if (viaje.fase === 'pidiendo_destino') {
-                        viaje.destino = ubicacionTexto;
-                        viaje.fase = 'finalizado';
-                        await viaje.save();
+                        viaje.destino = ubicacionTexto; viaje.fase = 'finalizado'; await viaje.save();
                         await procesarViaje(telefonoCliente, viaje);
                     }
                 } else {
@@ -215,46 +221,54 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- FUNCIÓN DE ASIGNACIÓN IMPARCIAL ---
-async function procesarViaje(numero, viaje) {
-    await enviarRespuesta(numero, "✅ Ruta confirmada.\n\n*Calculando tarifa y buscando al conductor más cercano...* 🔎📡");
+// --- FUNCIONES CENTRALES ---
+async function procesarViaje(numeroCliente, viaje) {
+    await enviarRespuesta(numeroCliente, "✅ Ruta confirmada.\n\n*Buscando al conductor más cercano...* 🔎📡");
 
-    let conductorAsignado = null;
+    let conductorCercano = null;
 
     if (viaje.coordenadasOrigen && viaje.coordenadasOrigen.length === 2) {
-        conductorAsignado = await Conductor.findOne({
+        conductorCercano = await Conductor.findOne({
             fase: 'finalizado', 
-            estadoTurno: 'Activo', // 🟢 NUEVO: ¡Solo asigna viajes a quienes estén Activos!
+            estadoTurno: 'Activo', 
             ubicacion: {
-                $near: {
-                    $geometry: { type: "Point", coordinates: viaje.coordenadasOrigen },
-                    $maxDistance: 8000 
-                }
+                $near: { $geometry: { type: "Point", coordinates: viaje.coordenadasOrigen }, $maxDistance: 8000 }
             }
         });
     }
 
-    setTimeout(async () => {
-        if (conductorAsignado) {
-            // 🟢 NUEVO: Si encontramos conductor, lo pasamos a "Ocupado" para que no le caigan 2 viajes a la vez
-            conductorAsignado.estadoTurno = 'Ocupado';
-            await conductorAsignado.save();
-
-            await enviarImagen(numero, "https://i.ibb.co/pBfkbfXx/mobility.png");
-            const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${conductorAsignado.nombre}\n🚗 *Vehículo:* ${conductorAsignado.vehiculo.modelo} (${conductorAsignado.vehiculo.color})\n🔢 *Placa:* ${conductorAsignado.vehiculo.placa}\n\n🛣️ *Ruta:* Registrada en sistema\n💵 *Tarifa Estimada:* $3.50\n\n📍 Llegando en aprox. 3 minutos.`;
-            await enviarRespuesta(numero, textoFicha);
-
-            // 🟢 OPCIONAL PARA EL FUTURO: Aquí le mandarías un mensaje al conductor avisándole que tiene un viaje.
-        } else {
-            await enviarRespuesta(numero, "Lo sentimos mucho. En este momento no hay conductores disponibles cerca de tu área. 😔 Intenta de nuevo en unos minutos.");
-        }
-    }, 4000);
+    if (conductorCercano) {
+        viaje.conductorAsignado = conductorCercano.telefono;
+        viaje.fase = 'esperando_conductor';
+        await viaje.save();
+        await enviarAlertaConductor(conductorCercano.telefono, viaje);
+    } else {
+        await enviarRespuesta(numeroCliente, "Lo sentimos mucho. En este momento no hay conductores disponibles cerca de tu área. 😔 Intenta de nuevo en unos minutos.");
+    }
 }
 
-// --- FUNCIONES DE ENVÍO BÁSICAS ---
-// (Las funciones enviarRespuesta, enviarImagen, enviarMenuBienvenida, enviarMenuTipoConductor, enviarMenuVehiculos y enviarRespuestaFinal quedan igual).
+async function enviarAlertaConductor(numeroConductor, viaje) {
+    try {
+        await axios({
+            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
+            data: {
+                messaging_product: "whatsapp", to: numeroConductor, type: "interactive",
+                interactive: {
+                    type: "button",
+                    body: { text: `🚨 *¡NUEVO SERVICIO CERCANO!* 🚨\n\n📍 *Origen:* ${viaje.origen}\n🏁 *Destino:* ${viaje.destino}\n\n¿Deseas tomar este viaje?` },
+                    action: {
+                        buttons: [
+                            { type: "reply", reply: { id: "btn_aceptar_viaje", title: "✅ Aceptar Viaje" } },
+                            { type: "reply", reply: { id: "btn_rechazar_viaje", title: "❌ Rechazar" } }
+                        ]
+                    }
+                }
+            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        });
+    } catch (e) { console.error("❌ Error Alerta:", e.response?.data || e.message); }
+}
 
-// 🟢 NUEVO: Menú para controlar el turno del conductor
 async function enviarMenuTurno(numero) {
     try {
         await axios({
@@ -262,84 +276,37 @@ async function enviarMenuTurno(numero) {
             data: {
                 messaging_product: "whatsapp", to: numero, type: "interactive",
                 interactive: {
-                    type: "button",
-                    body: { text: "🚖 *Panel de Conductor*\n\n¿Qué deseas hacer con tu jornada laboral?" },
-                    action: {
-                        buttons: [
-                            { type: "reply", reply: { id: "btn_iniciar_turno", title: "🟢 Iniciar Jornada" } },
-                            { type: "reply", reply: { id: "btn_finalizar_turno", title: "🔴 Finalizar Jornada" } }
-                        ]
-                    }
+                    type: "button", body: { text: "🚖 *Panel de Conductor*\n\n¿Qué deseas hacer con tu jornada laboral?" },
+                    action: { buttons: [ { type: "reply", reply: { id: "btn_iniciar_turno", title: "🟢 Iniciar Jornada" } }, { type: "reply", reply: { id: "btn_finalizar_turno", title: "🔴 Finalizar Jornada" } } ] }
                 }
             },
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
         });
-    } catch (e) { console.error("❌ Error Menu Turno:", e.response?.data || e.message); }
+    } catch (e) {}
 }
 
-// (Pega aquí tus funciones enviarRespuesta, enviarImagen, etc. que ya tenías)
 async function enviarRespuesta(numero, texto) {
-    try {
-        await axios({
-            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: { messaging_product: "whatsapp", to: numero, type: "text", text: { body: texto } },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (e) {}
+    try { await axios({ method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, data: { messaging_product: "whatsapp", to: numero, type: "text", text: { body: texto } }, headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } }); } catch (e) {}
 }
+
 async function enviarImagen(numero, urlImagen) {
-    try {
-        await axios({
-            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: { messaging_product: "whatsapp", to: numero, type: "image", image: { link: urlImagen } },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (e) {}
+    try { await axios({ method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, data: { messaging_product: "whatsapp", to: numero, type: "image", image: { link: urlImagen } }, headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } }); } catch (e) {}
 }
+
 async function enviarMenuBienvenida(numero) {
-    try {
-        await axios({
-            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: {
-                messaging_product: "whatsapp", to: numero, type: "interactive",
-                interactive: {
-                    type: "button",
-                    header: { type: "image", image: { link: "https://i.ibb.co/pBfkbfXx/mobility.png" } },
-                    body: { text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\nTu plataforma de transporte confiable.\n¿Qué deseas hacer hoy?" },
-                    action: { buttons: [ { type: "reply", reply: { id: "btn_solicitar", title: "Servicio Transporte" } }, { type: "reply", reply: { id: "btn_afiliar", title: "Afiliacion" } } ] }
-                }
-            },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (e) {}
+    try { await axios({ method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, data: { messaging_product: "whatsapp", to: numero, type: "interactive", interactive: { type: "button", header: { type: "image", image: { link: "https://i.ibb.co/pBfkbfXx/mobility.png" } }, body: { text: "*¡Bienvenido a Warshop Mobility!* 🇻🇪\nTu plataforma de transporte confiable.\n¿Qué deseas hacer hoy?" }, action: { buttons: [ { type: "reply", reply: { id: "btn_solicitar", title: "Servicio Transporte" } }, { type: "reply", reply: { id: "btn_afiliar", title: "Afiliacion" } } ] } } }, headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } }); } catch (e) {}
 }
+
 async function enviarMenuTipoConductor(numero) {
-    try {
-        await axios({
-            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: {
-                messaging_product: "whatsapp", to: numero, type: "interactive",
-                interactive: { type: "button", body: { text: "Dinos qué tipo de conductor eres para iniciar:" }, action: { buttons: [ { type: "reply", reply: { id: "tipo_independiente", title: "Independiente" } }, { type: "reply", reply: { id: "tipo_linea", title: "De Línea" } } ] } }
-            },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (e) {}
+    try { await axios({ method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, data: { messaging_product: "whatsapp", to: numero, type: "interactive", interactive: { type: "button", body: { text: "Dinos qué tipo de conductor eres para iniciar:" }, action: { buttons: [ { type: "reply", reply: { id: "tipo_independiente", title: "Independiente" } }, { type: "reply", reply: { id: "tipo_linea", title: "De Línea" } } ] } } }, headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } }); } catch (e) {}
 }
+
 async function enviarMenuVehiculos(numero) {
-    try {
-        await axios({
-            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
-            data: {
-                messaging_product: "whatsapp", to: numero, type: "interactive",
-                interactive: { type: "button", body: { text: "¿En qué unidad viajas hoy?" }, action: { buttons: [ { type: "reply", reply: { id: "select_moto", title: "🛵 Moto" } }, { type: "reply", reply: { id: "select_carro", title: "🚗 Carro" } } ] } }
-            },
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
-        });
-    } catch (e) {}
+    try { await axios({ method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`, data: { messaging_product: "whatsapp", to: numero, type: "interactive", interactive: { type: "button", body: { text: "¿En qué unidad viajas hoy?" }, action: { buttons: [ { type: "reply", reply: { id: "select_moto", title: "🛵 Moto" } }, { type: "reply", reply: { id: "select_carro", title: "🚗 Carro" } } ] } } }, headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` } }); } catch (e) {}
 }
+
 async function enviarRespuestaFinal(numero, nombre) {
-    const texto = `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará automáticamente. ¡Te esperamos! 🚖`;
-    await enviarRespuesta(numero, texto);
+    await enviarRespuesta(numero, `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará automáticamente. ¡Te esperamos! 🚖`);
 }
 
 app.listen(PORT, () => { console.log(`🚀 Motor de WARSHOP rugiendo en puerto ${PORT}`); });

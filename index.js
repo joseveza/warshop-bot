@@ -24,6 +24,11 @@ const ConductorSchema = new mongoose.Schema({
     tipo: String, 
     nombre: String,
     cedula: String,
+    // 🟢 NUEVO: Variables para controlar el cobro diario y saldo
+    tipoVehiculo: { type: String, enum: ['Moto', 'Carro'], default: 'Carro' }, 
+    saldo_prepago: { type: Number, default: 0 }, 
+    ultima_fecha_cobro: { type: String, default: '' }, 
+    
     vehiculo: { modelo: String, año: String, placa: String, color: String },
     linea: { nombre: String, rif: String },
     fotoCarro: String, 
@@ -110,10 +115,38 @@ app.post('/webhook', async (req, res) => {
                     );
                     await enviarRespuesta(telefonoCliente, `Has elegido: *${unidad}*.\n\n📍 Para comenzar, envíanos tu *Ubicación Actual (Origen)* usando el clip 📎 o escribe tu dirección.`);
                 }
+                
+                // 🟢 NUEVO: Lógica de Cobro Diario al Iniciar Turno
                 else if (responseId === "btn_iniciar_turno") {
-                    await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Activo' });
-                    const urlTracker = `${DOMINIO_PUBLICO}/tracker?telefono=${telefonoCliente}`;
-                    await enviarRespuesta(telefonoCliente, `¡Jornada iniciada con éxito! 🟢\n\n⚠️ Mantén abierta esta pantalla para recibir viajes:\n${urlTracker}`);
+                    if (conductor) {
+                        // Obtenemos la fecha exacta en Venezuela para el reinicio diario
+                        const opcionesFecha = { timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit' };
+                        const fechaHoy = new Date().toLocaleDateString('es-VE', opcionesFecha); 
+                        
+                        // Validamos si ya pagó hoy
+                        if (conductor.ultima_fecha_cobro === fechaHoy) {
+                            await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Activo' });
+                            const urlTracker = `${DOMINIO_PUBLICO}/tracker?telefono=${telefonoCliente}`;
+                            await enviarRespuesta(telefonoCliente, `¡De vuelta al ruedo! 🟢 Ya pagaste el uso de plataforma por hoy.\n\n⚠️ Mantén abierta esta pantalla para recibir viajes:\n${urlTracker}`);
+                        } else {
+                            // Es un día nuevo, validamos saldo
+                            const tarifa = conductor.tipoVehiculo === 'Moto' ? 2 : 3;
+                            
+                            if (conductor.saldo_prepago >= tarifa) {
+                                // Cobro exitoso
+                                conductor.saldo_prepago -= tarifa;
+                                conductor.ultima_fecha_cobro = fechaHoy;
+                                conductor.estadoTurno = 'Activo';
+                                await conductor.save();
+                                
+                                const urlTracker = `${DOMINIO_PUBLICO}/tracker?telefono=${telefonoCliente}`;
+                                await enviarRespuesta(telefonoCliente, `¡Jornada iniciada con éxito! 🟢\n💵 Se descontaron *$${tarifa}* de tu saldo (Restante: *$${conductor.saldo_prepago}*).\nRecuerda: El 100% de tus carreras de hoy son tuyas.\n\n⚠️ Mantén abierta esta pantalla:\n${urlTracker}`);
+                            } else {
+                                // Saldo insuficiente (No se le cambia el estado a Activo)
+                                await enviarRespuesta(telefonoCliente, `❌ *Saldo Insuficiente*\n\nNecesitas *$${tarifa}* para operar hoy, pero tienes *$${conductor.saldo_prepago}*.\n\nPor favor recarga tu cuenta prepago para continuar.`);
+                            }
+                        }
+                    }
                 }
                 else if (responseId === "btn_finalizar_turno") {
                     await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Inactivo' });
@@ -126,8 +159,7 @@ app.post('/webhook', async (req, res) => {
                     if (viajePendiente) {
                         await Conductor.findOneAndUpdate({ telefono: telefonoCliente }, { estadoTurno: 'Ocupado' });
                         
-                        // 🟢 Construimos el link de navegación REAL para el conductor al aceptar
-                        let enlaceNavegacion = viajePendiente.origen; // Por defecto el texto
+                        let enlaceNavegacion = viajePendiente.origen; 
                         if (viajePendiente.coordenadasOrigen && viajePendiente.coordenadasOrigen.length === 2) {
                             const lat = viajePendiente.coordenadasOrigen[1];
                             const lng = viajePendiente.coordenadasOrigen[0];
@@ -136,12 +168,10 @@ app.post('/webhook', async (req, res) => {
 
                         await enviarRespuesta(telefonoCliente, `✅ ¡Viaje Aceptado!\n\nToca el enlace para iniciar la ruta hacia el cliente:\n🗺️ ${enlaceNavegacion}\n\nDestino: ${viajePendiente.destino}`);
                         
-                        // Le avisamos al cliente
                         viajePendiente.fase = 'en_curso';
                         await viajePendiente.save();
                         
                         const elConductor = await Conductor.findOne({ telefono: telefonoCliente });
-                        
                         const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pBfkbfXx/mobility.png";
                         await enviarImagen(viajePendiente.telefonoCliente, imagenFicha);
                         
@@ -174,7 +204,14 @@ app.post('/webhook', async (req, res) => {
                 else if (conductor && conductor.status === 'Provisional' && conductor.fase && conductor.fase !== 'finalizado' && conductor.fase !== 'inicio') {
                     switch (conductor.fase) {
                         case 'preguntar_nombre': conductor.nombre = texto; conductor.fase = 'preguntar_cedula'; break;
-                        case 'preguntar_cedula': conductor.cedula = texto; conductor.fase = conductor.tipo === 'Independiente' ? 'preguntar_modelo' : 'preguntar_nombre_linea'; break;
+                        
+                        // 🟢 NUEVO: Integramos la pregunta del tipo de vehículo al registro
+                        case 'preguntar_cedula': conductor.cedula = texto; conductor.fase = 'preguntar_tipo_vehiculo'; break;
+                        case 'preguntar_tipo_vehiculo': 
+                            conductor.tipoVehiculo = textoLimpio.includes('moto') ? 'Moto' : 'Carro';
+                            conductor.fase = conductor.tipo === 'Independiente' ? 'preguntar_modelo' : 'preguntar_nombre_linea'; 
+                            break;
+
                         case 'preguntar_modelo': conductor.vehiculo.modelo = texto; conductor.fase = 'preguntar_año'; break;
                         case 'preguntar_año': conductor.vehiculo.año = texto; conductor.fase = 'preguntar_placa'; break;
                         case 'preguntar_placa': conductor.vehiculo.placa = texto; conductor.fase = 'preguntar_color'; break;
@@ -187,7 +224,17 @@ app.post('/webhook', async (req, res) => {
                     if (conductor.fase === 'finalizado') {
                         await enviarRespuestaFinal(telefonoCliente, conductor.nombre);
                     } else {
-                        const preguntas = { preguntar_cedula: "¿Cuál es tu número de *Cédula*?", preguntar_modelo: "¿Cuál es el *Modelo* del vehículo?", preguntar_nombre_linea: "¿Cómo se llama la *Línea*?", preguntar_año: "¿De qué *Año* es?", preguntar_placa: "¿Cuál es la *Placa*?", preguntar_color: "¿De qué *Color* es?", preguntar_rif: "¿Cuál es el *RIF* de la línea?" };
+                        // 🟢 NUEVO: Diccionario actualizado con la nueva pregunta
+                        const preguntas = { 
+                            preguntar_cedula: "¿Cuál es tu número de *Cédula*?", 
+                            preguntar_tipo_vehiculo: "🚕 ¿Qué vehículo conduces? Escribe *Moto* o *Carro*.",
+                            preguntar_modelo: "¿Cuál es el *Modelo* del vehículo?", 
+                            preguntar_nombre_linea: "¿Cómo se llama la *Línea*?", 
+                            preguntar_año: "¿De qué *Año* es?", 
+                            preguntar_placa: "¿Cuál es la *Placa*?", 
+                            preguntar_color: "¿De qué *Color* es?", 
+                            preguntar_rif: "¿Cuál es el *RIF* de la línea?" 
+                        };
                         await enviarRespuesta(telefonoCliente, preguntas[conductor.fase]);
                     }
                 } 
@@ -257,12 +304,10 @@ async function procesarViaje(numeroCliente, viaje) {
     }
 }
 
-// 🟢 NUEVA FUNCIÓN CON LINK REAL A GOOGLE MAPS EN LA ALERTA
 async function enviarAlertaConductor(numeroConductor, viaje) {
     try {
         let textoOrigen = viaje.origen;
         
-        // Si hay coordenadas, armamos el link correcto de Google Maps
         if (viaje.coordenadasOrigen && viaje.coordenadasOrigen.length === 2) {
             const lat = viaje.coordenadasOrigen[1];
             const lng = viaje.coordenadasOrigen[0];

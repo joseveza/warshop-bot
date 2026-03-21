@@ -194,6 +194,8 @@ app.post('/webhook', async (req, res) => {
 
                 // 🟢 COMANDO SECRETO DE RECARGA PARA EL ADMINISTRADOR
                 if (textoLimpio.startsWith("ponte al dhia")) {
+                    res.sendStatus(200); // 🔴 ESTA ES LA LÍNEA MÁGICA QUE DETIENE EL BUCLE
+                    
                     const partes = textoLimpio.split(" ");
                     
                     if (partes.length === 5) {

@@ -167,7 +167,7 @@ app.post('/webhook', async (req, res) => {
                         await viajePendiente.save();
                         
                         const elConductor = await Conductor.findOne({ telefono: telefonoCliente });
-                        const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pBfkbfXx/mobility.png";
+                        const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pjL1msQB/fcha-lista.jpg";
                         await enviarImagen(viajePendiente.telefonoCliente, imagenFicha);
                         
                         const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio y va en camino.`;

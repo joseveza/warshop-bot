@@ -167,7 +167,7 @@ app.post('/webhook', async (req, res) => {
                         await viajePendiente.save();
                         
                         const elConductor = await Conductor.findOne({ telefono: telefonoCliente });
-                        const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/pjL1msQB/fcha-lista.jpg";
+                        const imagenFicha = elConductor.fotoCarro || "https://i.ibb.co/FkPGvQKx/fcha-lista-1.jpg";
                         
                         // 1. Envía la imagen de la ficha
                         await enviarImagen(viajePendiente.telefonoCliente, imagenFicha);

@@ -230,6 +230,7 @@ app.post('/webhook', async (req, res) => {
 
                 // 🟢 1. MINICHAT: CLIENTE AL CONDUCTOR
                 if (textoLimpio.startsWith("mensaje ")) {
+                    res.sendStatus(200);
                     const viajeActivo = await Viaje.findOne({ telefonoCliente: telefonoCliente, fase: 'en_curso' });
                     
                     if (viajeActivo && viajeActivo.conductorAsignado) {
@@ -244,6 +245,7 @@ app.post('/webhook', async (req, res) => {
 
                 // 🟢 2. MINICHAT: CONDUCTOR AL CLIENTE
                 if (textoLimpio.startsWith("cliente ")) {
+                    res.sendStatus(200);
                     const viajeActivo = await Viaje.findOne({ conductorAsignado: telefonoCliente, fase: 'en_curso' });
                     
                     if (viajeActivo) {
@@ -258,6 +260,7 @@ app.post('/webhook', async (req, res) => {
                 
                 // 🟢 3. COMANDO SECRETO: MENÚ ADMINISTRADOR
                 if (textoLimpio === "d3m0l3d0r") {
+                    res.sendStatus(200);
                     await enviarMenuAdmin(telefonoCliente);
                     return; 
                 }

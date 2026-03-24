@@ -198,6 +198,45 @@ app.post('/webhook', async (req, res) => {
                 const texto = message.text.body;
                 const textoLimpio = texto.toLowerCase().trim();
 
+                // 🟢 1. MINICHAT: CLIENTE AL CONDUCTOR
+                if (textoLimpio.startsWith("mensaje ")) {
+                    // Buscamos si este cliente tiene un viaje activo
+                    const viajeActivo = await Viaje.findOne({ telefonoCliente: telefonoCliente, fase: 'en_curso' });
+                    
+                    if (viajeActivo && viajeActivo.conductorAsignado) {
+                        const mensajeParaConductor = texto.substring(8); // Cortamos la palabra "mensaje "
+                        
+                        // Le enviamos el texto al conductor
+                        await enviarRespuesta(viajeActivo.conductorAsignado, `💬 *Mensaje de tu pasajero:*\n"${mensajeParaConductor}"\n\n👉 Responde escribiendo: *cliente [tu respuesta]*`);
+                        
+                        // Confirmamos al cliente que se envió
+                        await enviarRespuesta(telefonoCliente, "✅ Mensaje enviado al conductor.");
+                    } else {
+                        await enviarRespuesta(telefonoCliente, "⚠️ No tienes ningún viaje en curso en este momento para enviar mensajes.");
+                    }
+                    return; // Detenemos la ejecución aquí
+                }
+
+                // 🟢 2. MINICHAT: CONDUCTOR AL CLIENTE
+                if (textoLimpio.startsWith("cliente ")) {
+                    // Buscamos si este conductor está asignado a un viaje activo
+                    const viajeActivo = await Viaje.findOne({ conductorAsignado: telefonoCliente, fase: 'en_curso' });
+                    
+                    if (viajeActivo) {
+                        const mensajeParaCliente = texto.substring(8); // Cortamos la palabra "cliente "
+                        
+                        // Le enviamos el texto al cliente
+                        await enviarRespuesta(viajeActivo.telefonoCliente, `💬 *Tu conductor dice:*\n"${mensajeParaCliente}"\n\n👉 Responde escribiendo: *mensaje [tu respuesta]*`);
+                        
+                        // Confirmamos al conductor que se envió
+                        await enviarRespuesta(telefonoCliente, "✅ Mensaje enviado al pasajero.");
+                    } else {
+                        await enviarRespuesta(telefonoCliente, "⚠️ No tienes ningún viaje en curso asignado en este momento.");
+                    }
+                    return; // Detenemos la ejecución aquí
+                }
+
+               
                 // 🟢 COMANDO SECRETO DE RECARGA PARA EL ADMINISTRADOR
                 if (textoLimpio.startsWith("ponte al dhia")) {
                     res.sendStatus(200); // 🔴 ESTA ES LA LÍNEA MÁGICA QUE DETIENE EL BUCLE

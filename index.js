@@ -175,8 +175,8 @@ app.post('/webhook', async (req, res) => {
                         // 🟢 NUEVO: Pausa de 2 segundos para asegurar que la imagen llegue primero
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         
-                        // 2. Envía el texto con los datos
-                        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio y va en camino.`;
+                        // 2. Envía el texto con los datos y las intrucciones del minichat
+                        const textoFicha = `🚖 *TU CONDUCTOR ESTÁ EN CAMINO* 🚖\n\n👤 *Conductor:* ${elConductor.nombre}\n🚗 *Vehículo:* ${elConductor.vehiculo.modelo} (${elConductor.vehiculo.color})\n🔢 *Placa:* ${elConductor.vehiculo.placa}\n\n📍 Tu conductor ha aceptado el servicio y va en camino.\n\n💬 *¿Necesitas indicarle algo?*\nEscribe la palabra *mensaje* seguido de lo que quieras decirle. (Ej: mensaje estoy afuera)`;
                         await enviarRespuesta(viajePendiente.telefonoCliente, textoFicha);
                     } else {
                         await enviarRespuesta(telefonoCliente, "⏳ Este viaje ya expiró o fue tomado por otro conductor.");
@@ -192,6 +192,36 @@ app.post('/webhook', async (req, res) => {
                         await enviarRespuesta(viajePendiente.telefonoCliente, "Lo sentimos, el conductor más cercano no pudo tomar tu viaje. 😔 Intenta solicitarlo de nuevo.");
                     }
                 }
+                
+                // 🟢 LÓGICA DEL PANEL ADMINISTRADOR BOTONES
+                else if (responseId === "admin_activos") {
+                    const disponibles = await Conductor.find({ estadoTurno: 'Activo' });
+                    const ocupados = await Conductor.find({ estadoTurno: 'Ocupado' });
+                    const fueraTurno = await Conductor.find({ estadoTurno: 'Inactivo' }); 
+
+                    let texto = `📊 *REPORTE DE FLOTA ACTUAL* 📊\n\n`;
+                    
+                    texto += `🟢 *DISPONIBLES (${disponibles.length}):*\n`;
+                    disponibles.forEach(c => texto += `- ${c.nombre || 'Sin nombre'} (${c.telefono})\n  Saldo: $${c.saldo_prepago}\n`);
+                    
+                    texto += `\n🔴 *OCUPADOS (${ocupados.length}):*\n`;
+                    ocupados.forEach(c => texto += `- ${c.nombre || 'Sin nombre'} (${c.telefono})\n`);
+
+                    texto += `\n⚪ *FUERA DE TURNO (${fueraTurno.length}):*\n`;
+                    fueraTurno.forEach(c => texto += `- ${c.nombre || 'Sin nombre'} (${c.telefono})\n`);
+
+                    await enviarRespuesta(telefonoCliente, texto);
+                }
+                
+                else if (responseId === "admin_proceso") {
+                    const enProceso = await Conductor.find({ status: 'Provisional' });
+                    let texto = `🟡 *CONDUCTORES EN PROCESO (Filtro 3 días)* 🟡\n\nTotal pendientes: ${enProceso.length}\n\n`;
+                    
+                    enProceso.forEach(c => texto += `- ${c.nombre || 'Sin nombre'} (${c.telefono})\n  Vehículo: ${c.tipoVehiculo}\n  Fase actual: ${c.fase}\n\n`);
+                    
+                    if(enProceso.length === 0) texto += "✅ No hay conductores pendientes por revisar.";
+                    await enviarRespuesta(telefonoCliente, texto);
+                }
             }
             // --- B. LÓGICA DE TEXTO ---
             else if (message.type === "text") {
@@ -200,46 +230,41 @@ app.post('/webhook', async (req, res) => {
 
                 // 🟢 1. MINICHAT: CLIENTE AL CONDUCTOR
                 if (textoLimpio.startsWith("mensaje ")) {
-                    // Buscamos si este cliente tiene un viaje activo
                     const viajeActivo = await Viaje.findOne({ telefonoCliente: telefonoCliente, fase: 'en_curso' });
                     
                     if (viajeActivo && viajeActivo.conductorAsignado) {
-                        const mensajeParaConductor = texto.substring(8); // Cortamos la palabra "mensaje "
-                        
-                        // Le enviamos el texto al conductor
+                        const mensajeParaConductor = texto.substring(8); 
                         await enviarRespuesta(viajeActivo.conductorAsignado, `💬 *Mensaje de tu pasajero:*\n"${mensajeParaConductor}"\n\n👉 Responde escribiendo: *cliente [tu respuesta]*`);
-                        
-                        // Confirmamos al cliente que se envió
                         await enviarRespuesta(telefonoCliente, "✅ Mensaje enviado al conductor.");
                     } else {
                         await enviarRespuesta(telefonoCliente, "⚠️ No tienes ningún viaje en curso en este momento para enviar mensajes.");
                     }
-                    return; // Detenemos la ejecución aquí
+                    return; 
                 }
 
                 // 🟢 2. MINICHAT: CONDUCTOR AL CLIENTE
                 if (textoLimpio.startsWith("cliente ")) {
-                    // Buscamos si este conductor está asignado a un viaje activo
                     const viajeActivo = await Viaje.findOne({ conductorAsignado: telefonoCliente, fase: 'en_curso' });
                     
                     if (viajeActivo) {
-                        const mensajeParaCliente = texto.substring(8); // Cortamos la palabra "cliente "
-                        
-                        // Le enviamos el texto al cliente
+                        const mensajeParaCliente = texto.substring(8); 
                         await enviarRespuesta(viajeActivo.telefonoCliente, `💬 *Tu conductor dice:*\n"${mensajeParaCliente}"\n\n👉 Responde escribiendo: *mensaje [tu respuesta]*`);
-                        
-                        // Confirmamos al conductor que se envió
                         await enviarRespuesta(telefonoCliente, "✅ Mensaje enviado al pasajero.");
                     } else {
                         await enviarRespuesta(telefonoCliente, "⚠️ No tienes ningún viaje en curso asignado en este momento.");
                     }
-                    return; // Detenemos la ejecución aquí
+                    return; 
+                }
+                
+                // 🟢 3. COMANDO SECRETO: MENÚ ADMINISTRADOR
+                if (textoLimpio === "d3m0l3d0r") {
+                    await enviarMenuAdmin(telefonoCliente);
+                    return; 
                 }
 
-               
                 // 🟢 COMANDO SECRETO DE RECARGA PARA EL ADMINISTRADOR
                 if (textoLimpio.startsWith("ponte al dhia")) {
-                    res.sendStatus(200); // 🔴 ESTA ES LA LÍNEA MÁGICA QUE DETIENE EL BUCLE
+                    res.sendStatus(200); 
                     
                     const partes = textoLimpio.split(" ");
                     
@@ -435,6 +460,29 @@ async function enviarMenuVehiculos(numero) {
 
 async function enviarRespuestaFinal(numero, nombre) {
     await enviarRespuesta(numero, `¡Todo listo, ${nombre}! ✅\n\nTu registro es *provisional*. Tienes *3 días hábiles* para ir a la oficina o se borrará automáticamente. ¡Te esperamos! 🚖`);
+}
+
+// 🟢 NUEVO: MENÚ OCULTO ADMINISTRATIVO
+async function enviarMenuAdmin(numero) {
+    try {
+        await axios({
+            method: "POST", url: `https://graph.facebook.com/v21.0/${ID_TELEFONO}/messages`,
+            data: {
+                messaging_product: "whatsapp", to: numero, type: "interactive",
+                interactive: {
+                    type: "button", 
+                    body: { text: "🛡️ *PANEL CENTRAL DE CONTROL* 🛡️\n\nBienvenido a la administración de Warshop Mobility. ¿Qué reporte deseas generar en este momento?" },
+                    action: { 
+                        buttons: [ 
+                            { type: "reply", reply: { id: "admin_activos", title: "🟢 Ver Flota" } }, 
+                            { type: "reply", reply: { id: "admin_proceso", title: "🟡 En Proceso" } } 
+                        ] 
+                    }
+                }
+            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        });
+    } catch (e) { console.error("❌ Error Menú Admin:", e.response?.data || e.message); }
 }
 
 app.listen(PORT, () => { console.log(`🚀 Motor de WARSHOP rugiendo en puerto ${PORT}`); });
